@@ -3,19 +3,16 @@ use std::sync::{Arc, Mutex};
 use crossbeam_utils::CachePadded;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-#[repr(C)]
 struct Cell<T: Default + Copy> {
     pos: AtomicU32,
     data: UnsafeCell<T>,
 }
 
-#[repr(C)]
 struct Users {
     senders: Arc<Mutex<u32>>,
     receivers: Arc<Mutex<u32>>,
 }
 
-#[repr(C)]
 pub struct RingBuffer<T: Default + Copy> {
     n: CachePadded<usize>,
     v: CachePadded<Vec<Cell<T>>>,
