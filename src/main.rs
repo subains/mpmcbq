@@ -4,11 +4,13 @@ use mpmcbq::RingBuffer;
 
 const THREADS : u32 = 2;
 const CAPACITY : usize = 128;
-const ELEMENTS : u32 = 10000000;
+const ELEMENTS : u32 = 100000000;
+
+type Token = u64;
 
 fn main() {
     let mut handles = vec![];
-    let (q, s, r)  = RingBuffer::<u32>::new(CAPACITY);
+    let (q, s, r)  = RingBuffer::<Token>::new(CAPACITY);
 
     for i in 0..THREADS/2 {
 
@@ -22,7 +24,7 @@ fn main() {
                 let mut fail: u32 = 0;
 
                 loop {
-                    if s.send(i as u32) {
+                    if s.send(i as Token) {
                         succ += 1;
                     } else {
                         fail += 1;
@@ -51,6 +53,7 @@ fn main() {
                         succ += 1;
                     } else {
                         fail += 1;
+
                         thread::sleep(time::Duration::from_micros(1));
                     }
 
