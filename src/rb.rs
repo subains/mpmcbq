@@ -1,6 +1,7 @@
 use std::cell::UnsafeCell;
 use std::sync::{Arc, Mutex};
 use crossbeam_utils::CachePadded;
+use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 struct Cell<T: Default + Copy> {
@@ -13,20 +14,22 @@ struct Users {
     receivers: Arc<Mutex<u32>>,
 }
 
-pub struct RingBuffer<T: Default + Copy> {
+pub struct RingBuffer<'a, T: Default + Copy> {
     n: CachePadded<usize>,
     v: CachePadded<Vec<Cell<T>>>,
+    users: CachePadded<Users>,
     enq_pos: CachePadded<AtomicU32>,
     deq_pos: CachePadded<AtomicU32>,
-    users: CachePadded<Users>,
+
+     _covariant: PhantomData<&'a ()>,
 }
 
-pub struct Sender<T: Default + Copy> {
-    rb: UnsafeCell<*mut RingBuffer<T>>,
+pub struct Sender<'a, T: Default + Copy> {
+    rb: UnsafeCell<*mut RingBuffer<'a, T>>,
 }
 
-pub struct Receiver<T: Default + Copy> {
-    rb: UnsafeCell<*mut RingBuffer<T>>,
+pub struct Receiver<'a, T: Default + Copy> {
+    rb: UnsafeCell<*mut RingBuffer<'a, T>>,
 }
 
 impl<T: Default + Copy> Drop for Cell<T> {
@@ -35,7 +38,7 @@ impl<T: Default + Copy> Drop for Cell<T> {
     }
 }
 
-impl<T: Default + Copy> Drop for RingBuffer<T> {
+impl<'a, T: Default + Copy> Drop for RingBuffer<'a, T> {
     fn drop(&mut self) {
         let n_s;
 
@@ -63,7 +66,7 @@ impl<T: Default + Copy> Drop for RingBuffer<T> {
     }
 }
 
-impl<T: Default + Copy> Drop for Sender<T> {
+impl<'a, T: Default + Copy> Drop for Sender<'a, T> {
     fn drop(&mut self) {
         let mut n = unsafe { (*(*self.rb.get())).users.senders.lock().unwrap() };
 
@@ -75,7 +78,7 @@ impl<T: Default + Copy> Drop for Sender<T> {
     }
 }
 
-impl<T: Default + Copy> Drop for Receiver<T> {
+impl<'a, T: Default + Copy> Drop for Receiver<'a, T> {
     fn drop(&mut self) {
         let mut n = unsafe { (*(*self.rb.get())).users.receivers.lock().unwrap() };
 
@@ -87,11 +90,11 @@ impl<T: Default + Copy> Drop for Receiver<T> {
     }
 }
 
-unsafe impl<T: Default + Copy> Send for Sender<T> where T: Send {}
-unsafe impl<T: Default + Copy> Sync for Sender<T> where T: Sync {}
+unsafe impl<'a, T: Default + Copy> Send for Sender<'a, T> where T: Send {}
+unsafe impl<'a, T: Default + Copy> Sync for Sender<'a, T> where T: Sync {}
 
-unsafe impl<T: Default + Copy> Send for Receiver<T> where T: Send {}
-unsafe impl<T: Default + Copy> Sync for Receiver<T> where T: Sync {}
+unsafe impl<'a, T: Default + Copy> Send for Receiver<'a, T> where T: Send {}
+unsafe impl<'a, T: Default + Copy> Sync for Receiver<'a, T> where T: Sync {}
 
 impl Users {
     pub fn new(s: u32, r: u32) -> Self {
@@ -102,7 +105,7 @@ impl Users {
     }
 }
 
-impl<T: Default + Copy> Sender<T> {
+impl<'a, T: Default + Copy> Sender<'a, T> {
     pub fn send(&mut self, d: T) -> bool {
         unsafe { (*(*self.rb.get())).send(d) }
     }
@@ -116,7 +119,7 @@ impl<T: Default + Copy> Sender<T> {
     }
 }
 
-impl<T: Default + Copy> Clone for Sender<T> {
+impl<'a, T: Default + Copy> Clone for Sender<'a, T> {
     fn clone(&self) -> Self {
         let mut n = unsafe { (*(*self.rb.get())).users.senders.lock().unwrap() };
 
@@ -134,7 +137,7 @@ impl<T: Default + Copy> Clone for Sender<T> {
     }
 }
 
-impl<T: Default + Copy> Clone for Receiver<T> {
+impl<'a, T: Default + Copy> Clone for Receiver<'a, T> {
     fn clone(&self) -> Self {
         let mut n = unsafe { (*(*self.rb.get())).users.receivers.lock().unwrap() };
 
@@ -152,7 +155,7 @@ impl<T: Default + Copy> Clone for Receiver<T> {
     }
 }
 
-impl<T: Default + Copy> Receiver<T> {
+impl<'a, T: Default + Copy> Receiver<'a, T> {
     pub fn recv(&mut self) -> Result<T, bool> {
         unsafe { (*(*self.rb.get())).recv() }
     }
@@ -177,7 +180,7 @@ impl<T: Default + Copy> Cell<T> {
     }
 }
 
-impl<T: Default + Copy> RingBuffer<T> {
+impl<'a, T: Default + Copy> RingBuffer<'a, T> {
     fn send(&mut self, d: T) -> bool {
         let mut pos = self.enq_pos.load(Ordering::Relaxed);
 
@@ -266,7 +269,7 @@ impl<T: Default + Copy> RingBuffer<T> {
         *self.n
     }
 
-    pub fn new(n: usize) -> (Box<RingBuffer<T>>, Sender<T>, Receiver<T>) {
+    pub fn new(n: usize) -> (Box<RingBuffer<'a, T>>, Sender<'a, T>, Receiver<'a, T>) {
         assert!(n > 0, "size must be > 0");
 
         let n = (n + 1).next_power_of_two();
@@ -282,6 +285,7 @@ impl<T: Default + Copy> RingBuffer<T> {
             enq_pos: CachePadded::new(AtomicU32::new(0)),
             deq_pos: CachePadded::new(AtomicU32::new(0)),
             users: CachePadded::new(Users::new(1, 1)),
+            _covariant : PhantomData,
         });
 
         let rb_ptr = &mut *rb as *mut RingBuffer<T>;
